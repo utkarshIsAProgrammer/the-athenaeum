@@ -1,0 +1,53 @@
+---
+import { readerHref, shortDateUtc } from "../lib/format";
+import type { ReadingEntry } from "../lib/types";
+
+interface Props {
+  entries: ReadingEntry[];
+}
+
+const { entries } = Astro.props;
+
+// An entry whose stored article no longer validates has no title to show, and
+// no view-transition name is set on these tiles: the same story may also appear
+// in the feed below, and a name must be unique within a document.
+const tiles = entries.filter((entry) => entry.article).slice(0, 6);
+---
+
+{
+  tiles.length > 0 && (
+    <section class="resume" aria-labelledby="resume-head">
+      <h2 class="resume__head" id="resume-head">
+        Continue reading
+        <span class="resume__hint">picked up where you left off</span>
+      </h2>
+      <ul class="resume__list">
+        {tiles.map((entry) => (
+          <li class="resume__item">
+            <a class="resume__link" href={readerHref(entry.article_id)}>
+              {entry.article?.image_url && (
+                <span class="resume__media">
+                  <img
+                    src={entry.article.image_url}
+                    alt=""
+                    loading="lazy"
+                    decoding="async"
+                    referrerpolicy="no-referrer"
+                  />
+                </span>
+              )}
+              <span class="resume__body">
+                <span class="resume__meta">
+                  {entry.article?.source && <span class="resume__source">{entry.article.source}</span>}
+                  <span class="resume__state">{entry.read ? "Finished" : "Reading"}</span>
+                </span>
+                <span class="resume__title">{entry.article?.title}</span>
+                <span class="resume__when">{shortDateUtc(entry.opened_at)}</span>
+              </span>
+            </a>
+          </li>
+        ))}
+      </ul>
+    </section>
+  )
+}

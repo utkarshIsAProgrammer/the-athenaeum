@@ -1,0 +1,26 @@
+---
+import type { Category } from "../lib/types";
+
+interface Props {
+  categories: Category[];
+  current: string;
+}
+
+const { categories, current } = Astro.props;
+
+const href = (slug: string) => (slug === "top" ? "/" : `/?category=${slug}`);
+---
+
+<nav class="chips" aria-label="Categories">
+  {
+    categories.map((category) => (
+      <a
+        class:list={["chip", { "chip--on": category.slug === current }]}
+        href={href(category.slug)}
+        aria-current={category.slug === current ? "page" : undefined}
+      >
+        {category.label}
+      </a>
+    ))
+  }
+</nav>

@@ -1,0 +1,121 @@
+---
+import { ClientRouter } from "astro:transitions";
+import TabBar from "../components/TabBar.astro";
+import { getCurrentUser } from "../lib/api";
+import "../styles/globals.css";
+import "../styles/components.css";
+
+interface Props {
+  title?: string;
+  description?: string;
+  bookmarkCount?: number;
+}
+
+const {
+  title = "The Athenaeum",
+  description = "A curated reading room of the day's journalism, gathered from NewsAPI, NewsData and FreeNewsApi.",
+  bookmarkCount = 0,
+} = Astro.props;
+
+// Read here rather than passed in by every page: the header is on all of them,
+// and `/api/auth/me` costs a local lookup with no upstream quota.
+const cookie = Astro.request.headers.get("cookie") ?? "";
+const { data } = await getCurrentUser(cookie);
+const user = data?.user ?? null;
+// The local part is enough to recognise yourself by; the full address is on
+// the account page.
+const handle = user?.email.split("@")[0] ?? null;
+
+const path = Astro.url.pathname;
+const pageTitle = title === "The Athenaeum" ? title : `${title} · The Athenaeum`;
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>{pageTitle}</title>
+    <meta name="description" content={description} />
+    <meta name="theme-color" content="#fbfbfc" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0b0c0f" media="(prefers-color-scheme: dark)" />
+    <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <!-- Cards and headlines share a `view-transition-name`, so the story title
+         morphs between the feed and the reader instead of cross-fading. -->
+    <ClientRouter />
+  </head>
+  <body>
+    <div class="shell">
+      <header class="appbar">
+        <div class="wrap appbar__inner">
+          <a class="brand" href="/">The Athenaeum<span class="brand__mark">.</span><span class="sr-only"
+              >Home</span
+            ></a>
+          <nav class="appbar__nav" aria-label="Primary">
+            <a class="appbar__link" href="/" aria-current={path === "/" ? "page" : undefined}>
+              Feed
+            </a>
+            <a
+              class="appbar__link"
+              href="/search"
+              aria-current={path.startsWith("/search") ? "page" : undefined}>Search</a
+            >
+            <a
+              class="appbar__link"
+              href="/bookmarks"
+              aria-current={path.startsWith("/bookmarks") ? "page" : undefined}>Bookmarks</a
+            >
+            <a
+              class="appbar__link"
+              href="/account"
+              aria-current={path.startsWith("/account") ? "page" : undefined}
+              title={user?.email}>{handle ?? "Sign in"}</a
+            >
+          </nav>
+        </div>
+      </header>
+
+      <main class="main">
+        <slot />
+      </main>
+
+      <TabBar bookmarkCount={bookmarkCount} {user} />
+    </div>
+
+    <script>
+      import { relativeTime } from "../lib/format";
+
+      // Thumbnails come from dozens of newsrooms; a dead one should collapse
+      // rather than leave a grey rectangle behind. Delegated on `document`,
+      // which survives a view transition, so this is wired once and never again.
+      document.addEventListener(
+        "error",
+        (event) => {
+          const target = event.target;
+          if (target instanceof HTMLImageElement) target.closest(".card__media")?.remove();
+        },
+        true,
+      );
+
+      // The server renders a fixed UTC date so hydration cannot mismatch;
+      // switching to "2h ago" afterwards is a progressive enhancement. This one
+      // has to re-run per navigation, because the router swaps in fresh nodes.
+      document.addEventListener("astro:page-load", () => {
+        for (const time of document.querySelectorAll("time[data-relative]")) {
+          const text = relativeTime(time.getAttribute("datetime") ?? "");
+          if (text) time.textContent = text;
+        }
+      });
+
+      // Production only: in dev the worker would shadow hot reload with its own
+      // cached responses.
+      if (import.meta.env.PROD && "serviceWorker" in navigator) {
+        window.addEventListener("load", () => {
+          void navigator.serviceWorker.register("/sw.js");
+        });
+      }
+    </script>
+  </body>
+</html>

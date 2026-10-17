@@ -1,0 +1,68 @@
+---
+import ArticleCard from "../components/ArticleCard.svelte";
+import SearchBox from "../components/SearchBox.svelte";
+import BaseLayout from "../layouts/BaseLayout.astro";
+import { getReading, getSavedIds, getSearchResults } from "../lib/api";
+
+const query = (Astro.url.searchParams.get("q") ?? "").trim();
+const ready = query.length >= 2;
+const cookie = Astro.request.headers.get("cookie") ?? "";
+
+const [results, savedIds, reading] = await Promise.all([
+  ready ? getSearchResults(query, 40) : Promise.resolve(null),
+  getSavedIds(cookie),
+  getReading(cookie),
+]);
+
+const articles = results?.data?.articles ?? [];
+const readIds = new Set(reading.data?.read_ids ?? []);
+---
+
+<BaseLayout title="Search" bookmarkCount={savedIds.size}>
+  <div class="wrap">
+    <h1 class="page-title page-title--display">Search</h1>
+    <p class="dateline">
+      <span>NewsAPI's month-long archive</span>
+      <span class="dateline__sep" aria-hidden="true">·</span>
+      <span>topped up with NewsData</span>
+    </p>
+
+    <SearchBox initialQuery={query} client:load />
+
+    <div class="section">
+      {
+        !ready ? (
+          <div class="state">
+            <p class="state__title">What are you looking for?</p>
+            <p class="state__hint">
+              Type at least two characters — a topic, a company, a person.
+            </p>
+          </div>
+        ) : results?.error ? (
+          <div class="state state--error">
+            <p class="state__title">Search failed</p>
+            <p class="state__hint">{results.error}</p>
+          </div>
+        ) : articles.length === 0 ? (
+          <div class="state">
+            <p class="state__title">No matches for “{query}”</p>
+            <p class="state__hint">Try a broader phrase or a single keyword.</p>
+          </div>
+        ) : (
+          <div class="stack">
+            {articles.map((article, index) => (
+              <ArticleCard
+                client:visible
+                article={article}
+                saved={savedIds.has(article.id)}
+                read={readIds.has(article.id)}
+                featured={index === 0}
+                level={index === 0 ? 2 : 3}
+              />
+            ))}
+          </div>
+        )
+      }
+    </div>
+  </div>
+</BaseLayout>

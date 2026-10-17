@@ -1,0 +1,106 @@
+/*
+ * The Athenaeum — design tokens.
+ *
+ * An editorial reading room: a display serif for headlines, a restrained sans
+ * for everything functional, hairline rules instead of boxes, and a single
+ * red accent. Light by default, dark follows the OS.
+ *
+ * `opsz` builds of the two families are used so each one renders at its
+ * intended optical size — a 42px headline and a 12px byline are not the same
+ * drawing.
+ */
+@import "@fontsource-variable/fraunces/opsz.css";
+@import "@fontsource-variable/fraunces/opsz-italic.css";
+@import "@fontsource-variable/inter/opsz.css";
+
+:root {
+  color-scheme: light dark;
+
+  /* Families */
+  --font-serif: "Fraunces Variable", Georgia, "Times New Roman", Times, serif;
+  --font-sans: "Inter Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  --font-display: var(--font-serif);
+
+  /* Surfaces */
+  --bg: #fbfbfc;
+  --surface: #ffffff;
+  --surface-sunken: #f1f2f6;
+  --border: #e4e6ec;
+  --border-strong: #d2d6df;
+
+  /* Text */
+  --heading: #131519;
+  --body: #3c424c;
+  --muted: #757d8b;
+
+  /* Accent */
+  --accent: #d33127;
+  --accent-ink: #ffffff;
+  --accent-wash: #fdeeec;
+
+  --shadow-card: 0 1px 2px rgb(16 20 28 / 5%), 0 10px 28px -18px rgb(16 20 28 / 18%);
+
+  /* A hairline rule, used far more than any box in this design. */
+  --rule: 1px solid var(--border);
+  --rule-strong: 1px solid var(--border-strong);
+
+  /* Radii — kept tight; editorial pages are ruled, not rounded. */
+  --radius-sm: 2px;
+  --radius: 3px;
+  --radius-lg: 5px;
+  --radius-pill: 999px;
+
+  /* Spacing */
+  --gap-1: 0.25rem;
+  --gap-2: 0.5rem;
+  --gap-3: 0.75rem;
+  --gap-4: 1rem;
+  --gap-5: 1.5rem;
+  --gap-6: 2.75rem;
+
+  /* Type */
+  --fs-xs: 0.75rem;
+  --fs-sm: 0.875rem;
+  --fs-base: 1rem;
+  --fs-lg: 1.1875rem;
+  --fs-xl: 1.5rem;
+  --fs-2xl: 2rem;
+  --fs-3xl: 2.625rem;
+  --fs-display: clamp(2.25rem, 7vw, 3.5rem);
+
+  /* The serif needs a touch of negative tracking as it scales up. */
+  --track-display: -0.022em;
+  --track-title: -0.012em;
+  /* Small functional text is set in caps with open tracking. */
+  --track-caps: 0.1em;
+
+  /* Layout */
+  --shell-max: 46rem;
+  --measure: 33rem;
+  --tabbar-h: 3.5rem;
+
+  /* Motion */
+  --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+  --dur: 180ms;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0b0c0f;
+    --surface: #15171c;
+    --surface-sunken: #1c1f26;
+    --border: #262932;
+    --border-strong: #343948;
+
+    --heading: #f2f4f7;
+    --body: #c3c8d1;
+    --muted: #8b929e;
+
+    --accent: #ff5a4b;
+    --accent-ink: #1b0a08;
+    --accent-wash: #2a1614;
+
+    --shadow-card: 0 1px 2px rgb(0 0 0 / 40%), 0 10px 28px -18px rgb(0 0 0 / 70%);
+  }
+}

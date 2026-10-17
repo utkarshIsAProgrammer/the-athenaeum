@@ -1,0 +1,21 @@
+{
+  "name": "The Athenaeum",
+  "short_name": "Athenaeum",
+  "description": "A curated reading room of the day's journalism, gathered from NewsAPI, NewsData and FreeNewsApi.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#fbfbfc",
+  "theme_color": "#fbfbfc",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml" },
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "Search", "url": "/search" },
+    { "name": "Bookmarks", "url": "/bookmarks" }
+  ]
+}

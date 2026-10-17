@@ -1,0 +1,54 @@
+---
+import type { User } from "../lib/types";
+
+interface Props {
+  bookmarkCount?: number;
+  user?: User | null;
+}
+
+const { bookmarkCount = 0, user = null } = Astro.props;
+const path = Astro.url.pathname;
+
+const tabs = [
+  { href: "/", label: "Feed", paths: ["M4 6h16", "M4 12h16", "M4 18h11"] },
+  { href: "/search", label: "Search", paths: ["M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14", "m20 20-3.6-3.6"] },
+  { href: "/bookmarks", label: "Saved", paths: ["M7 4h10a1 1 0 0 1 1 1v15l-6-4-6 4V5a1 1 0 0 1 1-1"] },
+  {
+    href: "/account",
+    label: user ? "You" : "Sign in",
+    paths: ["M12 4a4 4 0 1 1 0 8 4 4 0 0 1 0-8", "M5 20a7 7 0 0 1 14 0"],
+  },
+];
+
+const isActive = (href: string) => (href === "/" ? path === "/" : path.startsWith(href));
+---
+
+<nav class="tabbar" aria-label="Primary">
+  <div class="tabbar__inner">
+    {
+      tabs.map((tab) => (
+        <a class="tab" href={tab.href} aria-current={isActive(tab.href) ? "page" : undefined}>
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.7"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            {tab.paths.map((d) => (
+              <path d={d} />
+            ))}
+          </svg>
+          <span class="tab__label">
+            {tab.label}
+            {tab.href === "/bookmarks" && bookmarkCount > 0 && (
+              <span class="tab__badge">{bookmarkCount}</span>
+            )}
+          </span>
+        </a>
+      ))
+    }
+  </div>
+</nav>

@@ -1,0 +1,38 @@
+---
+import { readerHref } from "../lib/format";
+import type { TrendingResponse } from "../lib/types";
+
+interface Props {
+  trending: TrendingResponse | null;
+}
+
+const { trending } = Astro.props;
+const stories = trending?.stories.slice(0, 6) ?? [];
+---
+
+{
+  stories.length > 0 && (
+    <section class="trending" aria-labelledby="trending-head">
+      <h2 class="trending__head" id="trending-head">
+        Above the fold
+        <span class="trending__hint">one story, several newsrooms</span>
+      </h2>
+      <ol class="trending__list">
+        {stories.map((story, index) => (
+          <li class="trending__item">
+            <a class="trending__link" href={readerHref(story.id)}>
+              <span class="trending__rank" aria-hidden="true">
+                {index + 1}
+              </span>
+              <span class="trending__title">{story.title}</span>
+              <span class="trending__count">
+                {story.sources.length} {story.sources.length === 1 ? "outlet" : "outlets"}
+              </span>
+            </a>
+          </li>
+        ))}
+      </ol>
+      <span class="sr-only">Ranked by how many outlets ran the story.</span>
+    </section>
+  )
+}

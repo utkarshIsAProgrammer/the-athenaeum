@@ -1,0 +1,274 @@
+@import "./tokens.css";
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  min-height: 100dvh;
+  background: var(--bg);
+  color: var(--body);
+  font-family: var(--font-sans);
+  font-size: var(--fs-base);
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Headlines are the typography: a display serif, tightened as it scales up. */
+h1,
+h2,
+h3 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-weight: 620;
+  color: var(--heading);
+  line-height: 1.18;
+  letter-spacing: var(--track-title);
+  font-variant-ligatures: common-ligatures;
+}
+
+p {
+  margin: 0;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+img {
+  display: block;
+  max-width: 100%;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+/* --- shell ---------------------------------------------------------------- */
+
+.shell {
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  padding-bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom));
+}
+
+.wrap {
+  width: 100%;
+  max-width: var(--shell-max);
+  margin-inline: auto;
+  padding-inline: var(--gap-4);
+}
+
+.appbar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: color-mix(in srgb, var(--bg) 85%, transparent);
+  backdrop-filter: saturate(160%) blur(12px);
+  border-bottom: var(--rule);
+}
+
+.appbar__inner {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-4);
+  min-height: 3.5rem;
+}
+
+.brand {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.15rem;
+  font-family: var(--font-display);
+  font-size: var(--fs-lg);
+  font-weight: 650;
+  letter-spacing: var(--track-title);
+  color: var(--heading);
+}
+
+.brand__mark {
+  color: var(--accent);
+}
+
+.appbar__nav {
+  display: none;
+  margin-left: auto;
+  align-items: center;
+  gap: var(--gap-4);
+}
+
+.appbar__link {
+  position: relative;
+  padding-block: 0.35rem;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: var(--track-caps);
+  text-transform: uppercase;
+  color: var(--muted);
+  transition: color var(--dur) var(--ease);
+}
+
+/* A rule that grows in under the active section, rather than a pill. */
+.appbar__link::after {
+  content: "";
+  position: absolute;
+  inset-inline: 0;
+  bottom: 0;
+  height: 2px;
+  background: var(--accent);
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform var(--dur) var(--ease);
+}
+
+.appbar__link:hover {
+  color: var(--heading);
+}
+
+.appbar__link[aria-current="page"] {
+  color: var(--heading);
+}
+
+.appbar__link[aria-current="page"]::after,
+.appbar__link:hover::after {
+  transform: scaleX(1);
+}
+
+.main {
+  flex: 1;
+  padding-block: var(--gap-5) var(--gap-6);
+}
+
+/* --- tab bar -------------------------------------------------------------- */
+
+.tabbar {
+  position: fixed;
+  inset-inline: 0;
+  bottom: 0;
+  z-index: 30;
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  backdrop-filter: saturate(160%) blur(12px);
+  border-top: var(--rule);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+.tabbar__inner {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  width: 100%;
+  max-width: var(--shell-max);
+  margin-inline: auto;
+}
+
+.tab {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.15rem;
+  min-height: var(--tabbar-h);
+  font-size: var(--fs-xs);
+  font-weight: 550;
+  color: var(--muted);
+  transition: color var(--dur) var(--ease);
+}
+
+.tab svg {
+  width: 1.35rem;
+  height: 1.35rem;
+}
+
+.tab[aria-current="page"] {
+  color: var(--accent);
+}
+
+.tab__label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.tab__badge {
+  min-width: 1.15rem;
+  padding-inline: 0.25rem;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 0.625rem;
+  line-height: 1.15rem;
+  text-align: center;
+}
+
+@media (min-width: 60rem) {
+  .shell {
+    padding-bottom: 0;
+  }
+
+  .appbar__nav {
+    display: flex;
+  }
+
+  .tabbar {
+    display: none;
+  }
+}
+
+/* --- utilities ------------------------------------------------------------ */
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* A nameplate: the section as a headline, with a dateline under a rule. */
+.page-title {
+  font-size: var(--fs-2xl);
+  font-weight: 640;
+}
+
+.page-title--display {
+  font-size: var(--fs-display);
+  font-weight: 600;
+  letter-spacing: var(--track-display);
+}
+
+.dateline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--gap-2);
+  margin-top: var(--gap-3);
+  padding-top: var(--gap-3);
+  border-top: var(--rule);
+  font-size: var(--fs-xs);
+  letter-spacing: 0.03em;
+  color: var(--muted);
+}
+
+.dateline__sep {
+  color: var(--border-strong);
+}

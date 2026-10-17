@@ -1,0 +1,128 @@
+---
+import CategoryChips from "../components/CategoryChips.astro";
+import Feed from "../components/Feed.svelte";
+import ResumeRail from "../components/ResumeRail.astro";
+import TrendingRail from "../components/TrendingRail.astro";
+import BaseLayout from "../layouts/BaseLayout.astro";
+import { getCategories, getFeed, getReading, getSavedIds, getTrending } from "../lib/api";
+import { providerLabel } from "../lib/format";
+
+const category = Astro.url.searchParams.get("category") ?? "top";
+const isFront = category === "top";
+
+// Passed through to the API by hand: these calls bypass the `/api/*` proxy, so
+// the browser cannot attach the session cookie for us.
+const cookie = Astro.request.headers.get("cookie") ?? "";
+
+const [categories, feed, savedIds, reading] = await Promise.all([
+  getCategories(),
+  getFeed({ category, limit: 30 }),
+  getSavedIds(cookie),
+  getReading(cookie),
+]);
+
+const articles = feed.data?.articles ?? [];
+const meta = feed.data?.meta ?? null;
+const activeLabel = categories.find((entry) => entry.slug === category)?.label ?? "Top Stories";
+
+// The rail belongs to the front page; a reader who has chosen a section has
+// already said what they came for.
+const resume = isFront ? (reading.data?.entries ?? []) : [];
+const readIds = reading.data?.read_ids ?? [];
+
+// Trending is ranked from the cached top-stories page, so on the front page it
+// costs one cache read; elsewhere it would cost a fetch of `top`, so it is not
+// asked for at all.
+const trending = isFront && articles.length > 0 ? await getTrending(6) : null;
+
+// Rendered once on the server: it is a fact about today, not a clock.
+const dateline = new Intl.DateTimeFormat("en-GB", {
+  dateStyle: "full",
+  timeZone: "UTC",
+}).format(new Date());
+
+const credits =
+  meta && meta.providers.length > 0
+    ? `Gathered from ${meta.providers.map(providerLabel).join(" + ")}`
+    : "Headlines gathered from three wire services";
+
+const quotaPct = (used: number, cap: number) =>
+  Math.min(100, Math.round((used / Math.max(cap, 1)) * 100));
+---
+
+<BaseLayout title={isFront ? "The Athenaeum" : activeLabel} bookmarkCount={savedIds.size}>
+  <div class="wrap">
+    <h1 class="page-title page-title--display">{isFront ? "The Athenaeum" : activeLabel}</h1>
+    <p class="dateline">
+      <span>{dateline}</span>
+      <span class="dateline__sep" aria-hidden="true">·</span>
+      <span>{credits}</span>
+    </p>
+
+    <CategoryChips categories={categories} current={category} />
+
+    {
+      feed.error ? (
+        <div class="state state--error">
+          <p class="state__title">Couldn't load the feed</p>
+          <p class="state__hint">{feed.error}</p>
+        </div>
+      ) : (
+        <>
+          <p class:list={["status", { "status--stale": meta?.stale }]}>
+            <span class="status__dot" />
+            <span>
+              {meta?.stale
+                ? "Serving cached stories — today's live quota is used up."
+                : meta?.cached
+                  ? "Cached copy — this view costs no quota."
+                  : "Just fetched."}
+            </span>
+          </p>
+
+          <TrendingRail trending={trending?.data ?? null} />
+
+          <ResumeRail entries={resume} />
+
+          {articles.length > 0 ? (
+            <Feed
+              client:visible
+              articles={articles}
+              clusters={meta?.clusters ?? []}
+              savedIds={[...savedIds]}
+              {readIds}
+              category={category}
+              cursor={meta?.next_cursor ?? null}
+              hasMore={meta?.has_more ?? false}
+            />
+          ) : (
+            <div class="state" style="margin-top: var(--gap-5)">
+              <p class="state__title">Nothing here yet</p>
+              <p class="state__hint">
+                No stories came back for {activeLabel.toLowerCase()}. Try another category.
+              </p>
+            </div>
+          )}
+
+          {meta && meta.quotas.length > 0 && (
+            <div class="quotas">
+              {meta.quotas.map((quota) => (
+                <span class="quotas__item">
+                  <span>
+                    {providerLabel(quota.provider)} {quota.used}/{quota.limit}
+                  </span>
+                  <span class="quotas__bar">
+                    <span
+                      class="quotas__fill"
+                      style={`width: ${quotaPct(quota.used, quota.limit)}%`}
+                    />
+                  </span>
+                </span>
+              ))}
+            </div>
+          )}
+        </>
+      )
+    }
+  </div>
+</BaseLayout>

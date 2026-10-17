@@ -1,0 +1,143 @@
+---
+import ReaderTools from "../../components/ReaderTools.svelte";
+import SaveButton from "../../components/SaveButton.svelte";
+import Summariser from "../../components/Summariser.svelte";
+import BaseLayout from "../../layouts/BaseLayout.astro";
+import { getArticle, getCurrentUser, getSavedIds, recordReading } from "../../lib/api";
+import { fullDate, paragraphs, providerLabel, shortDateUtc } from "../../lib/format";
+
+const id = Astro.params.id ?? "";
+
+// The cookie has to be forwarded: these call the API directly, and bookmarks
+// are per-reader now, so without it every save button renders unsaved.
+const cookie = Astro.request.headers.get("cookie") ?? "";
+const [result, savedIds, me] = await Promise.all([
+  getArticle(id),
+  getSavedIds(cookie),
+  getCurrentUser(cookie),
+]);
+
+const article = result.data;
+const user = me.data?.user ?? null;
+
+// Opening a story is what puts it in the resume rail. Sent from here rather
+// than the browser so the rail fills up with JavaScript off, and only for a
+// reader it can belong to — a signed-out visitor would just be refused.
+if (article && user) await recordReading(article, cookie);
+
+const body = article?.body ? paragraphs(article.body) : [];
+// `incipit` is the newsroom's own standfirst; the description is the fallback.
+const standfirst = article?.incipit?.trim() || article?.description?.trim() || "";
+const byline = article?.authors?.length ? article.authors.join(", ") : (article?.author ?? "");
+---
+
+<BaseLayout
+  title={article?.title ?? "Story"}
+  description={standfirst || undefined}
+  bookmarkCount={savedIds.size}
+>
+  <div class="wrap">
+    <a class="reader__back" href="/">← Back to the feed</a>
+
+    {
+      !article ? (
+        <div class="state state--error" style="margin-top: var(--gap-4)">
+          <p class="state__title">This story has gone</p>
+          <p class="state__hint">
+            {result.error ?? "It is no longer in the reading room."}
+          </p>
+        </div>
+      ) : (
+        <article class="reader">
+          <p class="reader__kicker">
+            {article.source ?? providerLabel(article.provider)}
+          </p>
+
+          <h1 class="reader__title" style={`view-transition-name: article-title-${article.id}`}>
+            {article.title}
+          </h1>
+
+          {standfirst && <p class="reader__standfirst">{standfirst}</p>}
+
+          <div class="reader__byline">
+            {byline && <span>{byline}</span>}
+            {byline && <span class="dateline__sep" aria-hidden="true">·</span>}
+            <time datetime={article.published_at} data-relative title={fullDate(article.published_at)}>
+              {shortDateUtc(article.published_at)}
+            </time>
+            <span class="dateline__sep" aria-hidden="true">·</span>
+            <span>{providerLabel(article.provider)}</span>
+          </div>
+
+          <!-- Type size, line width and read-aloud sit under the dateline, so
+               they are in reach before the reading starts rather than after. -->
+          <ReaderTools
+            client:load
+            articleId={article.id}
+            text={body.join("\n\n")}
+            signedIn={Boolean(user)}
+          />
+
+          {
+            article.image_url && (
+              <figure class="reader__figure">
+                <img
+                  src={article.image_url}
+                  alt=""
+                  loading="eager"
+                  decoding="async"
+                  referrerpolicy="no-referrer"
+                />
+                <figcaption class="reader__caption">{article.title}</figcaption>
+              </figure>
+            )
+          }
+
+          <!-- Sits above the body on purpose: the condensed version is for the
+               reader who is deciding whether to read the whole thing. Nothing
+               is generated until the button is pressed. -->
+          <Summariser client:visible articleId={article.id} />
+
+          {
+            body.length > 0 ? (
+              <div class="reader__body">
+                {body.map((paragraph) => (
+                  <p>{paragraph}</p>
+                ))}
+              </div>
+            ) : (
+              <p class="reader__note">
+                The full text of this story is held by {article.source ?? "the publisher"}, not in
+                the reading room.{" "}
+                <a href={article.url} target="_blank" rel="noopener noreferrer">
+                  Read it at {article.source ?? "the source"}
+                </a>.
+              </p>
+            )
+          }
+
+          {
+            article.topics.length > 0 && (
+              <div class="reader__topics">
+                {article.topics.map((topic) => (
+                  <span class="chip chip--tiny">{topic.replace(/_/g, " ")}</span>
+                ))}
+              </div>
+            )
+          }
+
+          <div class="reader__actions">
+            <SaveButton client:visible article={article} initialSaved={savedIds.has(article.id)} />
+            <a class="reader__back" href={article.url} target="_blank" rel="noopener noreferrer">
+              Read at {article.source ?? "the source"} ↗
+            </a>
+          </div>
+
+          <!-- The foot of the story. An island watches this to decide the story
+               has been read, which is what dims it in the feed. -->
+          <span class="reader__end" data-reader-end aria-hidden="true"></span>
+        </article>
+      )
+    }
+  </div>
+</BaseLayout>

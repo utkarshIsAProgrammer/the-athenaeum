@@ -1,0 +1,51 @@
+---
+import SavedList from "../components/SavedList.svelte";
+import BaseLayout from "../layouts/BaseLayout.astro";
+import { getBookmarks, getCurrentUser, getReading } from "../lib/api";
+
+const cookie = Astro.request.headers.get("cookie") ?? "";
+
+const [me, result, reading] = await Promise.all([
+  getCurrentUser(cookie),
+  getBookmarks(cookie),
+  getReading(cookie),
+]);
+const user = me.data?.user ?? null;
+const bookmarks = result.data?.bookmarks ?? [];
+const readIds = reading.data?.read_ids ?? [];
+---
+
+<BaseLayout title="Bookmarks" bookmarkCount={bookmarks.length}>
+  <div class="wrap">
+    <h1 class="page-title page-title--display">Bookmarks</h1>
+    <p class="dateline">
+      <span>Kept on the server</span>
+      <span class="dateline__sep" aria-hidden="true">·</span>
+      <span>a saved story outlives the cache</span>
+    </p>
+
+    <div class="section">
+      {
+        !user ? (
+          <div class="state">
+            <p class="state__title">Sign in to keep a reading list</p>
+            <p class="state__hint">
+              Bookmarks belong to an account, so they follow you between devices rather than
+              dying with this browser.
+            </p>
+            <a class="state__action" href="/account">
+              Sign in or create an account
+            </a>
+          </div>
+        ) : result.error ? (
+          <div class="state state--error">
+            <p class="state__title">Couldn't load bookmarks</p>
+            <p class="state__hint">{result.error}</p>
+          </div>
+        ) : (
+          <SavedList client:visible {bookmarks} {readIds} />
+        )
+      }
+    </div>
+  </div>
+</BaseLayout>

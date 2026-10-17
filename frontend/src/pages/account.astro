@@ -1,0 +1,33 @@
+---
+import AccountPanel from "../components/AccountPanel.svelte";
+import BaseLayout from "../layouts/BaseLayout.astro";
+import { getAiKeys, getCurrentUser } from "../lib/api";
+
+const cookie = Astro.request.headers.get("cookie") ?? "";
+const [me, keys] = await Promise.all([getCurrentUser(cookie), getAiKeys(cookie)]);
+const user = me.data?.user ?? null;
+// A 401 when signed out arrives as `data: null`, which is the right empty list.
+const aiKeys = keys.data?.keys ?? [];
+
+// Formatted on the server: a date, not a clock, so hydration cannot disagree.
+const memberSince = user
+  ? new Intl.DateTimeFormat("en-GB", { dateStyle: "long", timeZone: "UTC" }).format(
+      new Date(user.created_at),
+    )
+  : null;
+---
+
+<BaseLayout title="Account">
+  <div class="wrap">
+    <h1 class="page-title page-title--display">Account</h1>
+    <p class="dateline">
+      <span>{user ? "Your reading room" : "Sign in or create an account"}</span>
+      <span class="dateline__sep" aria-hidden="true">·</span>
+      <span>bookmarks kept against you, not the browser</span>
+    </p>
+
+    <div class="section">
+      <AccountPanel client:load {user} {memberSince} keys={aiKeys} />
+    </div>
+  </div>
+</BaseLayout>

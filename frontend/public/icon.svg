@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="The Athenaeum">
+  <rect width="512" height="512" fill="#fbfbfc" />
+  <g fill="none" stroke="#d33127" stroke-width="50" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M256 150 L140 370" />
+    <path d="M256 150 L372 370" />
+    <path d="M178 300 H334" />
+  </g>
+</svg>
