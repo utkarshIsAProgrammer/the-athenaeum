@@ -18,6 +18,23 @@ import { FALLBACK_CATEGORIES } from "./types";
  */
 const API_ORIGIN = (import.meta.env.INTERNAL_API_URL ?? "http://127.0.0.1:8000").replace(/\/+$/, "");
 
+/**
+ * Proof that a request came from this server rather than from whoever else can
+ * reach the API. The renders below call the API directly instead of going
+ * through `/api/*`, so they have to identify themselves the same way the proxy
+ * does. Server-only: Vite never puts a non-`PUBLIC_` variable in the browser
+ * bundle, and an empty value simply means the API is not asking.
+ */
+const API_SECRET = import.meta.env.INTERNAL_API_SECRET ?? "";
+
+/** The two headers every call to the API carries. */
+function originHeaders(cookie: string): Record<string, string> {
+  const headers: Record<string, string> = { accept: "application/json" };
+  if (cookie) headers.cookie = cookie;
+  if (API_SECRET) headers["x-internal-secret"] = API_SECRET;
+  return headers;
+}
+
 export interface ApiResult<T> {
   data: T | null;
   error: string | null;
@@ -55,10 +72,7 @@ export async function apiGet<T>(
   cookie = "",
 ): Promise<ApiResult<T>> {
   try {
-    const headers: Record<string, string> = { accept: "application/json" };
-    if (cookie) headers.cookie = cookie;
-
-    const response = await fetch(buildUrl(path, query), { headers });
+    const response = await fetch(buildUrl(path, query), { headers: originHeaders(cookie) });
     if (!response.ok) return { data: null, error: await errorMessage(response) };
     return { data: (await response.json()) as T, error: null };
   } catch (cause) {
@@ -131,11 +145,9 @@ export function getReading(cookie = "") {
  */
 export async function recordReading(article: Article, cookie = ""): Promise<void> {
   try {
-    const headers: Record<string, string> = { "content-type": "application/json" };
-    if (cookie) headers.cookie = cookie;
     await fetch(buildUrl("/api/reading"), {
       method: "POST",
-      headers,
+      headers: { ...originHeaders(cookie), "content-type": "application/json" },
       body: JSON.stringify(article),
     });
   } catch {

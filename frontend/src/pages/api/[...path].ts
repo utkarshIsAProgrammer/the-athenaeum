@@ -2,6 +2,13 @@ import type { APIContext, APIRoute } from "astro";
 
 const API_ORIGIN = (import.meta.env.INTERNAL_API_URL ?? "http://127.0.0.1:8000").replace(/\/+$/, "");
 
+// What tells the API that this request came from the site rather than from
+// whoever else can resolve its hostname. Compared in constant time on the far
+// side; empty here simply means the API is not asking (see
+// `INTERNAL_API_SECRET`), which is the case when both halves share a network.
+// This is a server-only value: it never appears in the client bundle.
+const API_SECRET = import.meta.env.INTERNAL_API_SECRET ?? "";
+
 const METHODS_WITHOUT_BODY = new Set(["GET", "HEAD"]);
 
 // A forwarded-for header is a list of hops; only the first is the client, and
@@ -63,6 +70,10 @@ async function forward({ params, request, url, clientAddress }: APIContext): Pro
 
   const cookie = request.headers.get("cookie");
   if (cookie) headers.set("cookie", cookie);
+
+  // The API answers nobody else once a secret is configured, so this is what
+  // makes the proxy the only way in.
+  if (API_SECRET) headers.set("x-internal-secret", API_SECRET);
 
   // The API counts requests per client, and behind this proxy every request
   // arrives from the same socket address. Passing on who really asked is what

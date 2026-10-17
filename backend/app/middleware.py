@@ -7,6 +7,9 @@ route rather than inside one:
     tiers' daily allowances. A single loop hammering `/api/feed` can spend a
     day's quota in minutes, so requests are counted per client before anything
     else happens. This is not accounting — it is a stop for a runaway client.
+    Counting only means something if clients can be told apart, which is why
+    the same guard turns away a caller that did not come through the proxy —
+    see `internal_api_secret`.
   * **Shape.** Responses carry a fixed set of headers, and a request body is
     never buffered past a hard ceiling, so neither a leaked header nor an
     enormous POST can be used against the instance.
@@ -17,6 +20,7 @@ response body to rewrite headers it does not need to touch.
 
 from __future__ import annotations
 
+import hmac
 import json
 import time
 from collections import deque
@@ -148,6 +152,7 @@ class GuardsMiddleware:
         )
         self._max_bytes = max(1024, settings.max_request_bytes)
         self._trust_forwarded = settings.trust_forwarded_for
+        self._secret = settings.internal_api_secret
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
@@ -159,8 +164,17 @@ class GuardsMiddleware:
 
         # A CORS preflight is not the client doing anything, and a failed health
         # check is the platform deciding whether to keep this instance.
+        #
+        # The health check is also the one path that stays open when a secret is
+        # configured: it is answered to the host's own prober, which has no way
+        # to be told the secret, and getting this wrong gets the instance
+        # recycled. It reports whether the service is up and nothing else.
         if method == "OPTIONS" or path.endswith(_HEALTH_SUFFIX):
             await self.app(scope, receive, send)
+            return
+
+        if not self._from_the_proxy(scope):
+            await _refuse(send, 403, "This service is only reachable through the site.")
             return
 
         declared = _header(scope, b"content-length")
@@ -185,6 +199,22 @@ class GuardsMiddleware:
         scope.setdefault("state", {})["client_key"] = client
 
         await self.app(scope, _capped_receive(receive, self._max_bytes), send)
+
+    def _from_the_proxy(self, scope: Scope) -> bool:
+        """Whether this request came from the Astro proxy, when that is knowable.
+
+        No secret configured means no answer to give and no check to make; with
+        one, the header has to be there and has to match. Compared with
+        `compare_digest` because the alternative leaks the answer one character
+        at a time to anyone willing to measure.
+        """
+        if not self._secret:
+            return True
+
+        offered = _header(scope, b"x-internal-secret")
+        if offered is None:
+            return False
+        return hmac.compare_digest(offered.decode("latin-1"), self._secret)
 
     def _client(self, scope: Scope) -> str:
         """Who to count this against.

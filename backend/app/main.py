@@ -55,6 +55,16 @@ async def lifespan(app: FastAPI):
     if missing:
         log.warning("no API key configured for: %s", ", ".join(missing))
 
+    # Not a startup error, because an API on a private network is reached only
+    # by the proxy and has nothing to guard against. On a host that anyone can
+    # resolve it is the difference between a quota and an open tap, and it is
+    # the kind of omission that is invisible until the feed runs dry.
+    if settings.environment == "production" and not settings.internal_api_secret:
+        log.warning(
+            "no INTERNAL_API_SECRET: anyone who can reach this service can pose as a new "
+            "client on every request and spend the day's provider allowance"
+        )
+
     log.info("database  %s", settings.database_file)
     log.info("cache TTL %ss | stale window %ss", settings.cache_ttl_seconds, settings.stale_cache_ttl_seconds)
 

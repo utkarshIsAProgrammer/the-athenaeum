@@ -1,3 +1,6 @@
 dist/
 .astro/
 .vite/
+# Build output and project metadata from a local `vercel` run or a linked
+# deployment; Vercel rebuilds both, and they are per-machine.
+.vercel/

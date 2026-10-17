@@ -99,6 +99,21 @@ class Settings(BaseSettings):
     # same host rather than exposed directly; the proxy is what sets this.
     trust_forwarded_for: bool = True
 
+    # Shared with the Astro proxy, which sends it on every forwarded request.
+    #
+    # The two settings above and this one are one arrangement: taking the client
+    # address from a header is only safe while the only thing that can reach
+    # this service is the proxy that writes it. Split across two hosts — the
+    # frontend on Vercel and this service on a public URL — that stops being
+    # true, and a stranger who finds the hostname can send a fresh
+    # `x-forwarded-for` with every request, count as a new client each time, and
+    # spend the whole day's provider allowance in a minute. A secret cannot be
+    # guessed, so the service answers the proxy and nobody else.
+    #
+    # Empty means the check is off, which is right for a deployment where the
+    # API is on a private network and only the proxy can reach it at all.
+    internal_api_secret: str = ""
+
     # How long a sign-in lasts. Sessions are rows in SQLite, so this is a
     # sliding-ish upper bound rather than a browser-only cookie expiry.
     session_ttl_days: int = 30

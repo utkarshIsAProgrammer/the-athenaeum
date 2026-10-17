@@ -155,6 +155,58 @@ def test_the_forwarded_address_is_what_gets_counted(tmp_path: Path) -> None:
         assert refused.status_code == 429
 
 
+# ------------------------------------------------------------- proxy secret
+
+
+def test_a_caller_that_did_not_come_from_the_proxy_is_turned_away(tmp_path: Path) -> None:
+    # The API is on a public URL that anyone can resolve. Without this, a
+    # stranger sends a fresh `x-forwarded-for` per request, counts as a new
+    # client every time, and spends the day's provider allowance in a minute.
+    with TestClient(build(make_settings(tmp_path, internal_api_secret="s3cret"))) as client:
+        refused = client.get("/api/feed")
+
+        assert refused.status_code == 403
+        assert "only reachable through the site" in refused.json()["error"]
+
+
+def test_the_proxys_request_is_let_through(tmp_path: Path) -> None:
+    with TestClient(build(make_settings(tmp_path, internal_api_secret="s3cret"))) as client:
+        allowed = client.get("/api/feed", headers={"x-internal-secret": "s3cret"})
+
+        assert allowed.status_code == 200
+
+
+def test_a_near_miss_is_not_good_enough(tmp_path: Path) -> None:
+    with TestClient(build(make_settings(tmp_path, internal_api_secret="s3cret"))) as client:
+        assert client.get("/api/feed", headers={"x-internal-secret": "s3cre"}).status_code == 403
+        assert client.get("/api/feed", headers={"x-internal-secret": "s3cret "}).status_code == 403
+
+
+def test_no_secret_configured_means_no_check(tmp_path: Path) -> None:
+    # The default, and the right answer for an API only the proxy can reach.
+    with TestClient(build(make_settings(tmp_path))) as client:
+        assert client.get("/api/feed").status_code == 200
+
+
+def test_the_platforms_own_prober_never_needs_the_secret(tmp_path: Path) -> None:
+    # A health check the host cannot read is a health check that gets the
+    # instance recycled, and the prober has no way to be told the secret.
+    settings = make_settings(tmp_path, internal_api_secret="s3cret", rate_limit_requests=1)
+    with TestClient(build(settings)) as client:
+        for _ in range(5):
+            assert client.get("/api/health").status_code == 200
+
+
+def test_the_secret_is_checked_before_the_allowance_is_spent(tmp_path: Path) -> None:
+    # A stranger with a forged address must not even reach the counter, or the
+    # guard would be protecting the quota with a broken ruler.
+    settings = make_settings(tmp_path, internal_api_secret="s3cret", rate_limit_requests=1)
+    with TestClient(build(settings)) as client:
+        assert client.get("/api/feed", headers={"x-forwarded-for": "9.9.9.9"}).status_code == 403
+        # The refusal spent nothing, so the proxy still has its one request.
+        assert client.get("/api/feed", headers={"x-internal-secret": "s3cret"}).status_code == 200
+
+
 # ----------------------------------------------------------------- body size
 
 

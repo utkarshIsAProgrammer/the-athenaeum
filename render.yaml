@@ -1,0 +1,60 @@
+# The API half of the deployment. The frontend goes to Vercel; this service is
+# what it forwards `/api/*` to. Import this file from the Render dashboard
+# (New → Blueprint) and it builds itself from the repo.
+#
+# The two secrets generated below have to be carried to the other side by hand:
+# `INTERNAL_API_SECRET` is also set in the Vercel project, and it is the only
+# thing separating this service from anyone who reads its hostname.
+
+services:
+  - type: web
+    name: athenaeum-api
+    runtime: python
+    rootDir: backend
+    plan: free
+    buildCommand: pip install uv && uv sync --frozen --no-dev
+    # One worker, and not as a default. The rate limiter counts in memory, the
+    # aggregator's single-flight locks are in memory, and the store is one
+    # SQLite file — a second worker would break all three at once.
+    startCommand: .venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers 1
+    # Answered without an allowance and without the secret, because the prober
+    # that sends it has no way to be told either.
+    healthCheckPath: /api/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.7
+      # `production` makes the process refuse to start unless SECRET_KEY and
+      # SESSION_COOKIE_SECURE are both set, so neither can be forgotten.
+      - key: ENVIRONMENT
+        value: production
+      - key: SESSION_COOKIE_SECURE
+        value: "true"
+      # Encrypts readers' AI keys at rest. Changing it makes saved keys
+      # unreadable; readers add theirs again.
+      - key: SECRET_KEY
+        generateValue: true
+      - key: INTERNAL_API_SECRET
+        generateValue: true
+      # Prompted for on first deploy, because a leaked key in this file is a
+      # key in git for ever.
+      - key: NEWSAPI_KEY
+        sync: false
+      - key: NEWSDATA_KEY
+        sync: false
+      - key: FREENEWSAPI_KEY
+        sync: false
+
+    # A free instance has no disk, so `news.db` — accounts, bookmarks, the
+    # cached feed, every saved summary — is gone on each deploy and restart,
+    # and the daily provider counters reset with it. On a paid instance, add:
+    #
+    #   disk:
+    #     name: athenaeum-data
+    #     mountPath: /var/data
+    #     sizeGB: 1
+    #
+    # and set DATABASE_PATH=/var/data/news.db below.
+    #
+    # A free instance also sleeps after fifteen minutes idle, which the Vercel
+    # function will not wait out. Either give it a keep-alive ping or a paid
+    # plan.
