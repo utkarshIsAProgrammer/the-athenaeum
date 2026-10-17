@@ -39,6 +39,11 @@ const pageTitle = title === "The Athenaeum" ? title : `${title} · The Athenaeum
     <meta name="description" content={description} />
     <meta name="theme-color" content="#fbfbfc" media="(prefers-color-scheme: light)" />
     <meta name="theme-color" content="#0b0c0f" media="(prefers-color-scheme: dark)" />
+    <!-- The `.ico` first, because a browser that cannot read the SVG below —
+         anything before Safari 16, and most crawlers and bookmark managers —
+         asks for `/favicon.ico` by convention and shows a default page icon
+         when it is not there. -->
+    <link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48" />
     <link rel="icon" href="/icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <link rel="manifest" href="/manifest.webmanifest" />
