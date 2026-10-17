@@ -29,7 +29,6 @@
     placeholder="Search headlines — climate, elections, AI"
     autocomplete="off"
     enterkeyhint="search"
-    minlength="2"
   />
   {#if value !== ""}
     <button

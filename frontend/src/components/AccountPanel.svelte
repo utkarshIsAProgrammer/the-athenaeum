@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { signIn, signOut, signUp } from "../lib/auth";
+  import { issueRecoveryCode, recoverAccount, signIn, signOut, signUp } from "../lib/auth";
   import { KEY_PAGES, removeAiKey, saveAiKey } from "../lib/ai";
   import type { AiKeyState, User } from "../lib/types";
 
@@ -13,13 +13,39 @@
 
   let { user, memberSince = null, keys = [] }: Props = $props();
 
-  let mode = $state<"signin" | "register">("signin");
+  let mode = $state<"signin" | "register" | "recover">("signin");
   let email = $state("");
   let password = $state("");
+  /** What the reader typed off their piece of paper, in recovery mode. */
+  let recoveryEntry = $state("");
   let busy = $state(false);
   let error = $state<string | null>(null);
+  let notice = $state<string | null>(null);
 
   const isRegister = $derived(mode === "register");
+  const isRecover = $derived(mode === "recover");
+
+  // ----------------------------------------------------------- recovery code
+
+  let recoveryCode = $state<string | null>(null);
+  let codeBusy = $state(false);
+  let codeError = $state<string | null>(null);
+
+  async function generateCode() {
+    if (codeBusy) return;
+
+    codeBusy = true;
+    codeError = null;
+
+    const result = await issueRecoveryCode();
+    codeBusy = false;
+
+    if (!result.ok || !result.code) {
+      codeError = result.error ?? "Could not generate a code.";
+      return;
+    }
+    recoveryCode = result.code;
+  }
 
   // ---------------------------------------------------------------- AI keys
 
@@ -86,16 +112,84 @@
 
   // ------------------------------------------------------------- credential
 
+  type Field = "email" | "password" | "recovery_code";
+
+  /** The field the current message is about, so it can be marked and cleared. */
+  let badField = $state<Field | null>(null);
+
+  /**
+   * What is wrong with the form, if anything.
+   *
+   * The forms carry `novalidate`, so the browser does not answer with a bubble
+   * of its own: the wording here can match the rest of the page, and a reader
+   * who is told to fix something is told it in the same voice everywhere.
+   * Only the first problem is reported — the others are one keystroke behind.
+   */
+  function problem(): { field: Field; message: string } | null {
+    const address = email.trim();
+    if (!address) {
+      return { field: "email", message: "Enter the email address for your account." };
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(address)) {
+      return { field: "email", message: "That does not look like an email address — check it for a typo." };
+    }
+
+    if (isRecover) {
+      // Dashes and case are the server's business; length is the reader's.
+      const typed = recoveryEntry.replace(/[^0-9a-z]/gi, "");
+      if (!typed) {
+        return { field: "recovery_code", message: "Enter the recovery code you wrote down." };
+      }
+      if (typed.length < 20) {
+        return {
+          field: "recovery_code",
+          message: "A recovery code is twenty characters long. Check the one you wrote down.",
+        };
+      }
+    }
+
+    if (!password) {
+      return {
+        field: "password",
+        message: isRegister ? "Choose a password." : isRecover ? "Choose the password you want next." : "Enter your password.",
+      };
+    }
+    if ((isRegister || isRecover) && password.length < 8) {
+      return { field: "password", message: "A password needs at least eight characters." };
+    }
+
+    return null;
+  }
+
+  /** Once they start fixing the field the message is about, it has served its purpose. */
+  function cleared(field: Field) {
+    if (badField === field) {
+      badField = null;
+      error = null;
+    }
+  }
+
   async function submit(event: SubmitEvent) {
     event.preventDefault();
     if (busy) return;
 
+    const complaint = problem();
+    if (complaint) {
+      error = complaint.message;
+      badField = complaint.field;
+      return;
+    }
+
     busy = true;
     error = null;
+    notice = null;
+    badField = null;
 
-    const result = isRegister
-      ? await signUp(email, password)
-      : await signIn(email, password);
+    const result = isRecover
+      ? await recoverAccount(email, recoveryEntry, password)
+      : isRegister
+        ? await signUp(email, password)
+        : await signIn(email, password);
 
     if (!result.ok) {
       error = result.error ?? "Something went wrong.";
@@ -103,9 +197,30 @@
       return;
     }
 
+    // Recovering sets a password and signs every device out — including this
+    // one — so the reader has to sign in with what they just chose. Swapping
+    // the form is more use than reloading into the same locked door.
+    if (isRecover) {
+      mode = "signin";
+      password = "";
+      recoveryEntry = "";
+      notice = "That password is set and every device has been signed out. Sign in with it.";
+      busy = false;
+      return;
+    }
+
     // A full reload rather than a client-side nav: the header, the tab bar and
     // every save button on the page were rendered on the server as anonymous.
     location.assign("/account");
+  }
+
+  function showMode(next: "signin" | "register" | "recover") {
+    mode = next;
+    error = null;
+    notice = null;
+    // The mark belongs to the form that was on screen, not to the one arriving:
+    // a field left red across a tab switch is a complaint about nothing.
+    badField = null;
   }
 
   async function leave() {
@@ -122,6 +237,14 @@
     location.assign("/");
   }
 </script>
+
+<!-- The complaint is drawn against the box it is about, so a reader is never
+     sent to the foot of the form to find out which field it meant. -->
+{#snippet fieldMessage(field: Field)}
+  {#if badField === field && error}
+    <span class="auth__message" role="alert">{error}</span>
+  {/if}
+{/snippet}
 
 {#if user}
   <div class="auth">
@@ -154,7 +277,9 @@
           <div class="keys__head">
             <span class="keys__name">{entry.label}</span>
             {#if entry.configured}
-              <span class="keys__state">Saved {entry.hint ?? ""}</span>
+              <!-- The stored key's tail stays recognisable on hover, so the row
+                   itself can just say whether there is one. -->
+              <span class="keys__state" title={entry.hint ?? undefined}>Saved</span>
             {:else}
               <span class="keys__state keys__state--off">Not set</span>
             {/if}
@@ -198,6 +323,31 @@
       {/if}
     </section>
 
+    <section class="keys" aria-labelledby="recovery-title">
+      <h2 class="keys__title" id="recovery-title">Recovery code</h2>
+      <p class="keys__blurb">
+        No email is ever sent from here, so a code written down before you need it is the only way
+        back into an account whose password is forgotten. Only a hash of it is kept, and generating
+        a new one replaces the old.
+      </p>
+
+      {#if recoveryCode}
+        <p class="codes__code">{recoveryCode}</p>
+        <p class="keys__notice" role="status">
+          Write it down now — this is the only time it is shown. Dashes and capitalisation do not
+          matter when you use it.
+        </p>
+      {:else}
+        <div class="keys__controls">
+          <button class="keys__save" type="button" disabled={codeBusy} onclick={generateCode}>
+            {codeBusy ? "Generating…" : "Generate a code"}
+          </button>
+        </div>
+      {/if}
+
+      {#if codeError}<p class="auth__error" role="alert">{codeError}</p>{/if}
+    </section>
+
     <div class="auth__actions">
       <button class="auth__submit" type="button" disabled={busy} onclick={leave}>
         {busy ? "Signing out…" : "Sign out"}
@@ -211,14 +361,11 @@
     <div class="auth__tabs" role="tablist" aria-label="Account">
       <button
         class="auth__tab"
-        class:auth__tab--on={!isRegister}
+        class:auth__tab--on={mode === "signin"}
         type="button"
         role="tab"
-        aria-selected={!isRegister}
-        onclick={() => {
-          mode = "signin";
-          error = null;
-        }}>Sign in</button
+        aria-selected={mode === "signin"}
+        onclick={() => showMode("signin")}>Sign in</button
       >
       <button
         class="auth__tab"
@@ -226,53 +373,134 @@
         type="button"
         role="tab"
         aria-selected={isRegister}
-        onclick={() => {
-          mode = "register";
-          error = null;
-        }}>Create an account</button
+        onclick={() => showMode("register")}>Create an account</button
       >
     </div>
 
-    <form class="auth__form" onsubmit={submit}>
-      <label class="auth__field">
-        <span class="auth__label">Email</span>
-        <input
-          class="auth__input"
-          type="email"
-          name="email"
-          autocomplete="email"
-          required
-          bind:value={email}
-        />
-      </label>
+    {#if isRecover}
+      <form class="auth__form" novalidate onsubmit={submit}>
+        <p class="auth__blurb">
+          Enter the recovery code you wrote down, and choose the password you want from now on.
+        </p>
 
-      <label class="auth__field">
-        <span class="auth__label">Password</span>
-        <input
-          class="auth__input"
-          type="password"
-          name="password"
-          autocomplete={isRegister ? "new-password" : "current-password"}
-          minlength={isRegister ? 8 : undefined}
-          required
-          bind:value={password}
-        />
-      </label>
+        <label class="auth__field">
+          <span class="auth__label">Email</span>
+          <input
+            class="auth__input"
+            type="email"
+            name="email"
+            autocomplete="email"
+            required
+            aria-invalid={badField === "email"}
+            bind:value={email}
+            oninput={() => cleared("email")}
+          />
+          {@render fieldMessage("email")}
+        </label>
 
-      {#if isRegister}
-        <p class="auth__meta">At least eight characters. Nothing else is asked of you.</p>
-      {/if}
+        <label class="auth__field">
+          <span class="auth__label">Recovery code</span>
+          <input
+            class="auth__input"
+            type="text"
+            name="recovery_code"
+            autocomplete="off"
+            spellcheck="false"
+            placeholder="XXXX-XXXX-XXXX-XXXX-XXXX"
+            required
+            aria-invalid={badField === "recovery_code"}
+            bind:value={recoveryEntry}
+            oninput={() => cleared("recovery_code")}
+          />
+          {@render fieldMessage("recovery_code")}
+        </label>
 
-      {#if error}<p class="auth__error" role="alert">{error}</p>{/if}
+        <label class="auth__field">
+          <span class="auth__label">New password</span>
+          <input
+            class="auth__input"
+            type="password"
+            name="password"
+            autocomplete="new-password"
+            required
+            aria-invalid={badField === "password"}
+            bind:value={password}
+            oninput={() => cleared("password")}
+          />
+          {@render fieldMessage("password")}
+        </label>
 
-      <button class="auth__submit" type="submit" disabled={busy}>
-        {busy ? "One moment…" : isRegister ? "Create account" : "Sign in"}
-      </button>
-    </form>
+        <p class="auth__meta">
+          At least eight characters. Using the code signs every device out, and the code is spent —
+          generate a new one once you are back in.
+        </p>
+
+        {#if error && !badField}<p class="auth__error" role="alert">{error}</p>{/if}
+        {#if notice}<p class="keys__notice" role="status">{notice}</p>{/if}
+
+        <button class="auth__submit" type="submit" disabled={busy}>
+          {busy ? "One moment…" : "Set the new password"}
+        </button>
+
+        <button class="auth__link" type="button" onclick={() => showMode("signin")}>
+          Back to sign in
+        </button>
+      </form>
+    {:else}
+      <form class="auth__form" novalidate onsubmit={submit}>
+        <label class="auth__field">
+          <span class="auth__label">Email</span>
+          <input
+            class="auth__input"
+            type="email"
+            name="email"
+            autocomplete="email"
+            required
+            aria-invalid={badField === "email"}
+            bind:value={email}
+            oninput={() => cleared("email")}
+          />
+          {@render fieldMessage("email")}
+        </label>
+
+        <label class="auth__field">
+          <span class="auth__label">Password</span>
+          <input
+            class="auth__input"
+            type="password"
+            name="password"
+            autocomplete={isRegister ? "new-password" : "current-password"}
+            required
+            aria-invalid={badField === "password"}
+            bind:value={password}
+            oninput={() => cleared("password")}
+          />
+          {@render fieldMessage("password")}
+        </label>
+
+        {#if isRegister}
+          <p class="auth__meta">At least eight characters. Nothing else is asked of you.</p>
+        {/if}
+
+        {#if error && !badField}<p class="auth__error" role="alert">{error}</p>{/if}
+        {#if notice}<p class="keys__notice" role="status">{notice}</p>{/if}
+
+        <button class="auth__submit" type="submit" disabled={busy}>
+          {busy ? "One moment…" : isRegister ? "Create account" : "Sign in"}
+        </button>
+
+        {#if !isRegister}
+          <button class="auth__link" type="button" onclick={() => showMode("recover")}>
+            Forgotten your password?
+          </button>
+        {/if}
+      </form>
+    {/if}
 
     <p class="auth__blurb">
       An account keeps your bookmarks and your own AI key in one place, on any device you sign in
-      from. No email is sent and no profile is built.
+      from. Nothing is ever sent to you: if you forget your password, a recovery code you generated
+      beforehand is what gets you back in.
     </p>
   </div>
 {/if}

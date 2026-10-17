@@ -675,6 +675,31 @@
   box-shadow: inset 0 -2px 0 var(--accent);
 }
 
+/* Set by the form's own validation, never by the browser: the field the
+   message is about is marked the same way the message is coloured. */
+.auth__input[aria-invalid="true"] {
+  border-color: var(--accent);
+  background: var(--accent-wash);
+  /* The message below is drawn as the bottom of this same box. */
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+}
+
+/* The complaint is part of the box rather than a note beside it: flush under the
+   field it is about, sharing the mark's border and wash, so the two read as one
+   object and the eye never has to travel to the foot of the form to find out
+   which field was meant. The top border is dropped — the input's own bottom edge
+   is now the line between them. */
+.auth__message {
+  margin-top: calc(-1 * var(--gap-2));
+  padding: 0.4rem 0.9rem 0.5rem;
+  border: 1px solid var(--accent);
+  border-top: 0;
+  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+  background: var(--accent-wash);
+  font-size: var(--fs-sm);
+  color: var(--heading);
+}
+
 .auth__submit {
   align-self: flex-start;
   min-height: 2.75rem;
@@ -705,6 +730,20 @@
   background: var(--accent-wash);
   font-size: var(--fs-sm);
   color: var(--heading);
+}
+
+/* A way out of the form rather than an action in it — recovering a forgotten
+   password, or coming back to sign in. Weight of a link, shape of a button. */
+.auth__link {
+  align-self: flex-start;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: var(--fs-sm);
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 
 .auth__eyebrow {
@@ -886,6 +925,24 @@
   background: var(--accent-wash);
   font-size: var(--fs-sm);
   color: var(--heading);
+}
+
+/* The one thing on this page that cannot be recovered if it is missed, so it is
+   set apart from the prose and spaced to be read aloud or copied by hand. */
+.codes__code {
+  margin-top: var(--gap-4);
+  padding: var(--gap-4);
+  border: var(--rule-strong);
+  border-radius: var(--radius);
+  background: var(--surface-sunken);
+  font-family: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+  font-size: var(--fs-lg);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--heading);
+  text-align: center;
+  overflow-wrap: anywhere;
+  user-select: all;
 }
 
 /* --- states --------------------------------------------------------------- */
