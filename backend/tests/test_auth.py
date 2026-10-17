@@ -17,7 +17,12 @@ from app.db import Database
 from app.dependencies import get_database
 from app.errors import install_error_handlers
 from app.routers import auth, bookmarks
-from app.security import hash_password, new_session_token, token_fingerprint, verify_password
+from app.security import (
+    hash_password,
+    new_session_token,
+    token_fingerprint,
+    verify_password,
+)
 
 WHEN = datetime(2026, 10, 16, 12, 0, tzinfo=timezone.utc)
 
@@ -213,6 +218,144 @@ def test_an_expired_session_is_refused(tmp_path: Path) -> None:
     database.close()
 
 
+# ----------------------------------------------------------------- recovery
+
+
+def issue_code(client: TestClient) -> str:
+    response = client.post("/api/auth/recovery-code")
+    assert response.status_code == 201, response.text
+    return response.json()["recovery_code"]
+
+
+def recover(client: TestClient, code: str, password: str = "a replacement passphrase"):
+    return client.post(
+        "/api/auth/recover",
+        json={"email": READER["email"], "recovery_code": code, "password": password},
+    )
+
+
+def test_a_recovery_code_needs_a_session_to_be_issued(client: TestClient) -> None:
+    # Nothing is emailed, so a code can only be handed to someone who is
+    # already in — a locked-out reader asking for one is asking too late.
+    assert client.post("/api/auth/recovery-code").status_code == 401
+
+
+def test_a_recovery_code_is_shown_once_and_kept_only_as_a_hash(client: TestClient) -> None:
+    register(client)
+    code = issue_code(client)
+
+    groups = code.split("-")
+    assert len(groups) == 5
+    assert all(len(group) == 4 for group in groups)
+
+    # Not in any later response, and not in the database in a usable form.
+    assert code not in client.get("/api/auth/me").text
+    stored = client.app.state.database._conn.execute(
+        "SELECT recovery_hash FROM users WHERE email = ?", (READER["email"],)
+    ).fetchone()["recovery_hash"]
+    assert stored
+    assert code not in stored
+    assert verify_password("".join(groups), stored)
+
+
+def test_a_recovery_code_sets_a_password_and_signs_every_device_out(
+    client: TestClient,
+) -> None:
+    register(client)
+    code = issue_code(client)
+    stolen = client.cookies.get("athenaeum_session")
+
+    assert recover(client, code).status_code == 204
+
+    # The old password is gone, and the session that was live before the
+    # recovery is dead server-side rather than merely forgotten.
+    client.cookies.clear()
+    assert client.post("/api/auth/login", json=READER).status_code == 401
+    client.cookies.set("athenaeum_session", stolen)
+    assert client.get("/api/auth/me").json() == {"user": None}
+
+    client.cookies.clear()
+    assert (
+        client.post(
+            "/api/auth/login",
+            json={"email": READER["email"], "password": "a replacement passphrase"},
+        ).status_code
+        == 200
+    )
+
+
+def test_a_recovery_code_is_spent_by_being_used(client: TestClient) -> None:
+    register(client)
+    code = issue_code(client)
+
+    assert recover(client, code).status_code == 204
+
+    again = recover(client, code, "a third passphrase")
+    assert again.status_code == 401
+    # And the spent code cannot have set that password.
+    assert (
+        client.post(
+            "/api/auth/login",
+            json={"email": READER["email"], "password": "a third passphrase"},
+        ).status_code
+        == 401
+    )
+
+
+def test_a_recovery_code_is_accepted_as_it_is_typed(client: TestClient) -> None:
+    # It is read off a piece of paper, so case, spaces and dashes carry no
+    # meaning and must not be a reason to be locked out.
+    register(client)
+    code = issue_code(client)
+
+    typed = f"  {code.lower().replace('-', ' ')}  "
+    assert recover(client, typed).status_code == 204
+
+
+def test_a_wrong_code_and_a_wrong_address_are_answered_identically(
+    client: TestClient,
+) -> None:
+    # Otherwise this endpoint tells anyone who asks which addresses have
+    # accounts here.
+    register(client)
+    issue_code(client)
+
+    mine = recover(client, "AAAA-BBBB-CCCC-DDDD-EEEE")
+    theirs = client.post(
+        "/api/auth/recover",
+        json={
+            "email": "nobody@example.com",
+            "recovery_code": "AAAA-BBBB-CCCC-DDDD-EEEE",
+            "password": "a replacement passphrase",
+        },
+    )
+
+    assert mine.status_code == theirs.status_code == 401
+    assert mine.content == theirs.content
+
+
+def test_recovery_is_refused_for_an_account_that_never_generated_a_code(
+    client: TestClient,
+) -> None:
+    register(client)
+
+    assert recover(client, "AAAA-BBBB-CCCC-DDDD-EEEE").status_code == 401
+    # The account is untouched: a guess must not become a password change.
+    assert client.post("/api/auth/login", json=READER).status_code == 200
+
+
+def test_a_new_code_replaces_the_one_before_it(client: TestClient) -> None:
+    # A code written down twice is a code kept in two places, and the older
+    # one is the one more likely to have leaked.
+    register(client)
+    older = issue_code(client)
+    newer = issue_code(client)
+    assert older != newer
+
+    assert recover(client, older, "the older code's password").status_code == 401
+    assert recover(client, newer, "the newer code's password").status_code == 204
+
+
 # ---------------------------------------------------------------- bookmarks
 
 
@@ -295,4 +438,38 @@ def test_bookmarks_predating_accounts_are_carried_across(tmp_path: Path) -> None
     # Kept, unowned: they predate any account, so no reader could claim them.
     orphaned = database.bookmarks_list("")
     assert [bookmark.id for bookmark in orphaned] == ["article-old"]
+    database.close()
+
+
+def test_accounts_predating_recovery_codes_gain_the_column(tmp_path: Path) -> None:
+    # `CREATE TABLE IF NOT EXISTS` never adds a column, so an account created
+    # before recovery existed has to be altered — with nothing in it, because
+    # no code can be invented for a reader who was never offered one.
+    path = tmp_path / "legacy.db"
+    legacy = sqlite3.connect(path)
+    legacy.executescript(
+        """
+        CREATE TABLE users (
+            id            TEXT PRIMARY KEY,
+            email         TEXT NOT NULL,
+            password_hash TEXT NOT NULL,
+            created_at    TEXT NOT NULL
+        );
+        """
+    )
+    legacy.execute(
+        "INSERT INTO users (id, email, password_hash, created_at) VALUES (?, ?, ?, ?)",
+        ("user-1", READER["email"], hash_password(READER["password"]), WHEN.isoformat()),
+    )
+    legacy.commit()
+    legacy.close()
+
+    database = Database(path, stale_ttl_seconds=3600)
+
+    columns = {row["name"] for row in database._conn.execute("PRAGMA table_info(users)")}
+    assert "recovery_hash" in columns
+
+    found = database.recovery_by_email(READER["email"])
+    assert found is not None, "the account itself must survive the migration"
+    assert found[1] is None, "a reader who was never issued a code has nothing to recover with"
     database.close()

@@ -223,6 +223,24 @@ class MeResponse(BaseModel):
     user: User | None = None
 
 
+class RecoveryRequest(BaseModel):
+    """A written-down recovery code, and the password that replaces the old.
+
+    The code is accepted in whatever shape it was typed — the server strips
+    case, spaces and dashes — so the bounds here are only about size.
+    """
+
+    email: str = Field(min_length=3, max_length=254)
+    recovery_code: str = Field(min_length=8, max_length=64)
+    password: str = Field(min_length=8, max_length=256)
+
+
+class RecoveryCode(BaseModel):
+    """A newly minted code. Returned once, at the moment it is generated."""
+
+    recovery_code: str
+
+
 class Summary(BaseModel):
     """A story compressed by the reader's own key.
 

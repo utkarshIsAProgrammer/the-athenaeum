@@ -57,6 +57,11 @@ CREATE TABLE IF NOT EXISTS users (
     id            TEXT PRIMARY KEY,
     email         TEXT NOT NULL,
     password_hash TEXT NOT NULL,
+    -- The hash of this reader's recovery code, or NULL until they ask for one.
+    -- This service sends no mail, so a code written down is the whole way back
+    -- into an account whose password is gone — which is why only its hash is
+    -- kept here, exactly as with the password itself.
+    recovery_hash TEXT,
     created_at    TEXT NOT NULL
 );
 
@@ -208,6 +213,20 @@ class Database:
         self._migrate_bookmarks()
         self._migrate_article_dates()
         self._migrate_article_body_checks()
+        self._migrate_user_recovery()
+
+    def _migrate_user_recovery(self) -> None:
+        """Add `users.recovery_hash`, the hash of a written-down recovery code.
+
+        NULL for every account that predates it, which is the honest state: a
+        reader who was never offered a code has nothing to recover with, and no
+        code can be invented for them now.
+        """
+        columns = {row["name"] for row in self._conn.execute("PRAGMA table_info(users)")}
+        if not columns or "recovery_hash" in columns:
+            return
+
+        self._conn.execute("ALTER TABLE users ADD COLUMN recovery_hash TEXT")
 
     def _migrate_bookmarks(self) -> None:
         """Rebuild `bookmarks` if it predates accounts.
@@ -605,6 +624,38 @@ class Database:
             ).fetchone()
         return _user_from_row(row) if row else None
 
+    def recovery_by_email(self, email: str) -> tuple[User, str | None] | None:
+        """The account and its recovery-code hash, for a recovery attempt.
+
+        `None` for the whole lookup when there is no such address, so the
+        caller cannot tell "no account" from "no code" by the shape of the
+        answer it gets here.
+        """
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT id, email, password_hash, recovery_hash, created_at FROM users"
+                " WHERE lower(email) = lower(?)",
+                (email,),
+            ).fetchone()
+        if row is None:
+            return None
+        return _user_from_row(row), row["recovery_hash"]
+
+    def user_recovery_set(self, user_id: str, recovery_hash: str | None) -> None:
+        """Store a new code's hash, or clear it once a code has been spent."""
+        with self._lock:
+            self._conn.execute(
+                "UPDATE users SET recovery_hash = ? WHERE id = ?", (recovery_hash, user_id)
+            )
+            self._conn.commit()
+
+    def user_password_set(self, user_id: str, password_hash: str) -> None:
+        with self._lock:
+            self._conn.execute(
+                "UPDATE users SET password_hash = ? WHERE id = ?", (password_hash, user_id)
+            )
+            self._conn.commit()
+
     def session_create(self, token_hash: str, user_id: str, ttl_seconds: int) -> None:
         now = _utcnow()
         with self._lock:
@@ -640,6 +691,18 @@ class Database:
         with self._lock:
             self._conn.execute("DELETE FROM sessions WHERE token_hash = ?", (token_hash,))
             self._conn.commit()
+
+    def sessions_delete_for_user(self, user_id: str) -> int:
+        """Sign a reader out on every device. A password change must do this.
+
+        Whoever proved they own the account is the account's owner; anyone
+        still holding a session from before cannot be assumed to be. Changing a
+        password that leaves an attacker's cookie alive has not closed anything.
+        """
+        with self._lock:
+            cursor = self._conn.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
+            self._conn.commit()
+        return cursor.rowcount
 
     # ------------------------------------------------------------ bookmarks
 

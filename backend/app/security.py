@@ -61,6 +61,35 @@ def new_session_token() -> str:
     return secrets.token_urlsafe(32)
 
 
+# A recovery code is written down by hand and read back off the paper, so the
+# letters that get misread are not in it: no O/0, no I/1/L, no B/8, no S/5/Z/2.
+_CODE_ALPHABET = "ACDEFGHJKMNPQRTUVWXY34679"
+_CODE_GROUPS = 5
+_CODE_GROUP_SIZE = 4
+
+
+def new_recovery_code() -> str:
+    """A code a reader can copy onto paper without a mistake.
+
+    Five groups of four from a 25-character alphabet is about 93 bits — the
+    same order as the password it stands in for, and short enough that writing
+    it down is not a chore. The dashes are for reading; they carry no entropy.
+    """
+    return "-".join(
+        "".join(secrets.choice(_CODE_ALPHABET) for _ in range(_CODE_GROUP_SIZE))
+        for _ in range(_CODE_GROUPS)
+    )
+
+
+def normalise_recovery_code(raw: str) -> str:
+    """Strip what a reader may reasonably add or leave out: case, spaces, dashes.
+
+    Both the storing and the checking side go through this, so a code is only
+    ever hashed in the shape it will be typed in.
+    """
+    return "".join(character for character in raw.upper() if character.isalnum())
+
+
 def token_fingerprint(token: str) -> str:
     """What the database stores instead of the token itself.
 

@@ -174,9 +174,15 @@ class GuardsMiddleware:
                 return
 
         limiter = self._auth if path.startswith(_AUTH_PREFIX) else self._general
-        if not limiter.allow(self._client(scope)):
+        client = self._client(scope)
+        if not limiter.allow(client):
             await _refuse(send, 429, "Too many requests. Wait a moment and try again.")
             return
+
+        # Written onto the scope because a search has to count against the same
+        # identity this counted against, and two ways of working out who is
+        # asking would eventually disagree.
+        scope.setdefault("state", {})["client_key"] = client
 
         await self.app(scope, _capped_receive(receive, self._max_bytes), send)
 

@@ -1,6 +1,8 @@
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
@@ -14,6 +16,12 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         extra="ignore",
     )
+
+    # `production` asserts the deployment is public: it is served over TLS,
+    # sits behind a proxy, and has a real secret. Setting it turns the
+    # inconsistencies that are harmless in development into a startup error,
+    # so the flip cannot be half-done — see `_check_production` below.
+    environment: Literal["development", "production"] = "development"
 
     newsapi_key: str = ""
     newsdata_key: str = ""
@@ -73,6 +81,17 @@ class Settings(BaseSettings):
     # ceiling costs an honest reader nothing.
     rate_limit_auth_requests: int = 30
     rate_limit_auth_window_seconds: int = 300
+
+    # A search is the one request that cannot be served from the page cache:
+    # two people who type different words produce two cache keys, and each one
+    # is an upstream call. The daily ceilings above are only 300 calls in
+    # total, so a single client walking a dictionary through `/api/search`
+    # would spend the day's allowance for everyone in under a minute. Each
+    # client, signed in or not, therefore gets a daily allowance of *new*
+    # searches; a query already in the cache is free and never counted.
+    # Set the anonymous allowance to 0 to require an account to search at all.
+    search_daily_queries_anonymous: int = 5
+    search_daily_queries_user: int = 50
     # Bodies are a few hundred bytes of JSON; anything larger is an attack or a
     # mistake, and either way there is no reason to buffer it.
     max_request_bytes: int = 64 * 1024
@@ -128,6 +147,33 @@ class Settings(BaseSettings):
     # itself and its subdomains. The built-in list in `services/quality.py`
     # always applies; this is for whatever the reader's own feed turns up.
     feed_blocked_domains: str = ""
+
+    @model_validator(mode="after")
+    def _check_production(self) -> "Settings":
+        """Refuse to start a public deployment that is still in dev shape.
+
+        Turning the app on without a host to run it on is easy; turning it on
+        *completely* is the step that gets missed, and every omission here is
+        one that fails quietly — a session cookie sent in the clear, provider
+        keys encrypted with nothing. So `ENVIRONMENT=production` is a claim
+        about the deployment, and an incomplete claim stops the process instead
+        of serving strangers.
+        """
+        if self.environment != "production":
+            return self
+
+        problems: list[str] = []
+        if not self.session_cookie_secure:
+            problems.append("SESSION_COOKIE_SECURE must be true once the site is served over https")
+        if not self.secret_key:
+            problems.append("SECRET_KEY must be set to encrypt readers' AI keys at rest")
+
+        if problems:
+            raise ValueError(
+                "ENVIRONMENT=production but the deployment is unfinished: "
+                + "; ".join(problems)
+            )
+        return self
 
     @property
     def session_ttl_seconds(self) -> int:

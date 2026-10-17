@@ -16,7 +16,13 @@ from app.providers.base import ProviderError
 from app.providers.freenewsapi import Listing
 from app.schemas import Article, ArticleDetail
 from app.services import reader
-from app.services.aggregator import CURSOR_PREFIX, NewsAggregator
+from app.services.aggregator import (
+    CURSOR_PREFIX,
+    MAX_BUDGET_CLIENTS,
+    NewsAggregator,
+    SearchBudget,
+    SearchQuotaExceeded,
+)
 
 WHEN = datetime(2026, 10, 16, 12, 0, tzinfo=timezone.utc)
 
@@ -552,3 +558,119 @@ async def test_trending_surfaces_the_story_several_outlets_ran(
         "Tesla unveils the flying car Roadster"
     ]
     assert len(trending.stories[0].sources) == 2
+
+
+# --------------------------------------------------------------- search budget
+
+# A search is the only input that costs an upstream call for every distinct
+# value, so it is the one place a single client can spend the day's allowance
+# for everyone. These cover both the counter and the refusal it produces.
+
+
+def test_a_client_may_run_its_allowance_of_new_searches_and_no_more() -> None:
+    budget = SearchBudget(anonymous_limit=2, signed_in_limit=5)
+
+    assert budget.allow("a", signed_in=False) is True
+    assert budget.allow("a", signed_in=False) is True
+    assert budget.allow("a", signed_in=False) is False
+    # Spending it does not spend anyone else's.
+    assert budget.allow("b", signed_in=False) is True
+
+
+def test_signing_in_raises_the_ceiling_the_same_client_is_counted_against() -> None:
+    budget = SearchBudget(anonymous_limit=1, signed_in_limit=2)
+
+    assert budget.allow("a", signed_in=False) is True
+    assert budget.allow("a", signed_in=False) is False
+    # What was spent anonymously still counts, but the ceiling is now the
+    # larger one — so signing in is what the refusal told the reader to do.
+    assert budget.allow("a", signed_in=True) is True
+    assert budget.allow("a", signed_in=True) is False
+
+
+def test_an_anonymous_allowance_of_zero_requires_an_account_to_search() -> None:
+    budget = SearchBudget(anonymous_limit=0, signed_in_limit=10)
+
+    assert budget.allow("a", signed_in=False) is False
+    assert budget.allow("a", signed_in=True) is True
+
+
+def test_the_budget_table_forgets_its_oldest_client_rather_than_growing() -> None:
+    budget = SearchBudget(anonymous_limit=1, signed_in_limit=1)
+
+    for index in range(MAX_BUDGET_CLIENTS + 100):
+        budget.allow(f"client-{index}", signed_in=False)
+
+    assert len(budget._used) <= MAX_BUDGET_CLIENTS
+
+
+async def test_a_search_past_the_allowance_is_refused_rather_than_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = make_settings(tmp_path, search_daily_queries_anonymous=2)
+    database = Database(settings.database_file, settings.stale_cache_ttl_seconds)
+    news = NewsAggregator(settings, database)
+    await news.startup()
+    calls: list[str] = []
+    stub_providers(monkeypatch, newsapi_articles=[article(article_id="found")], calls=calls)
+    try:
+        await news.feed(query="one", client="a", limit=20)
+        await news.feed(query="two", client="a", limit=20)
+        calls.clear()
+
+        with pytest.raises(SearchQuotaExceeded) as refused:
+            await news.feed(query="three", client="a", limit=20)
+
+        assert refused.value.limit == 2
+        assert refused.value.signed_in is False
+        # And the refused call never reached a provider.
+        assert calls == []
+    finally:
+        await news.shutdown()
+        database.close()
+
+
+async def test_a_repeated_search_is_answered_from_the_cache_and_costs_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The allowance counts upstream calls, not requests: the same words typed
+    # twice are one cache key, so the second search is free however little of
+    # the allowance is left.
+    settings = make_settings(tmp_path, search_daily_queries_anonymous=1)
+    database = Database(settings.database_file, settings.stale_cache_ttl_seconds)
+    news = NewsAggregator(settings, database)
+    await news.startup()
+    calls: list[str] = []
+    stub_providers(monkeypatch, newsapi_articles=[article(article_id="found")], calls=calls)
+    try:
+        first = await news.feed(query="climate", client="a", limit=20)
+        calls.clear()
+
+        # The allowance is spent now, so only a cache hit can answer this.
+        again = await news.feed(query="climate", client="a", limit=20)
+
+        assert first.meta.cached is False
+        assert again.meta.cached is True
+        assert calls == []
+    finally:
+        await news.shutdown()
+        database.close()
+
+
+async def test_browsing_the_feed_never_spends_a_search(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The allowance is only about `q`: a reader paging through categories with
+    # the anonymous allowance set to zero must still get their feed.
+    settings = make_settings(tmp_path, search_daily_queries_anonymous=0)
+    database = Database(settings.database_file, settings.stale_cache_ttl_seconds)
+    news = NewsAggregator(settings, database)
+    await news.startup()
+    stub_providers(monkeypatch, newsdata_articles=[article(article_id="browsed")])
+    try:
+        feed = await news.feed(category="technology", client="a", limit=20)
+
+        assert [item.id for item in feed.articles] == ["browsed"]
+    finally:
+        await news.shutdown()
+        database.close()

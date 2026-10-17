@@ -8,6 +8,7 @@ from .db import Database
 from .schemas import User
 from .security import token_fingerprint
 from .services import NewsAggregator
+from .services.aggregator import SearchQuotaExceeded
 
 # The one cookie this app sets. Kept HttpOnly so no script can read the token.
 SESSION_COOKIE = "athenaeum_session"
@@ -35,3 +36,36 @@ def require_user(request: Request) -> User:
     if user is None:
         raise HTTPException(status_code=401, detail="Sign in to continue.")
     return user
+
+
+def get_client_key(request: Request) -> str:
+    """Who to count this request against.
+
+    Decided once by `GuardsMiddleware`, which needs the same answer to do its
+    own counting; the fallback only covers a request that arrived without the
+    guards in front of it, as the tests build.
+    """
+    key = getattr(request.state, "client_key", "")
+    return key or (request.client.host if request.client else "unknown")
+
+
+def search_limit_exceeded(exc: SearchQuotaExceeded) -> HTTPException:
+    """The refusal for a client that has spent the day's new searches.
+
+    A search is the one call that reaches a provider for each distinct input,
+    so an unlimited one lets a single client spend the whole day's allowance —
+    and the feed then serves yesterday to everyone until the counters reset.
+    The reply is a 429 rather than an empty page because the query is not
+    wrong, it is merely too expensive to run again today.
+    """
+    if exc.signed_in:
+        detail = (
+            f"You have used all {exc.limit} of today's new searches. "
+            "Searches you have already run keep working, and the allowance returns after midnight UTC."
+        )
+    else:
+        detail = (
+            f"You have used all {exc.limit} of today's new searches without an account. "
+            "Sign in for a larger allowance, or try again after midnight UTC."
+        )
+    return HTTPException(status_code=429, detail=detail)

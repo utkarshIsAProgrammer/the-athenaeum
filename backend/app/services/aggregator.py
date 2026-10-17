@@ -75,6 +75,13 @@ MIN_LIMIT = 5
 # one cold page, which is where they started anyway.
 MAX_LOCKS = 128
 
+# How many clients' daily search counts one process remembers before the oldest
+# is dropped. The budget stops a single client draining the day's allowance for
+# everyone; the provider ceilings still bound what the process as a whole can
+# spend, so losing a stale count under a flood of invented addresses is
+# survivable in a way that an unbounded table would not be.
+MAX_BUDGET_CLIENTS = 4096
+
 # Every upstream call asks for the maximum and the result is cached whole, so
 # a later request for a smaller page is free and the top-stories cache can be
 # shared with `/api/trending`.
@@ -126,6 +133,68 @@ class _Page(BaseModel):
 def _cache_key(scope: str, **params: object) -> str:
     serialized = json.dumps(params, sort_keys=True, default=str)
     return f"{scope}:{hashlib.sha1(serialized.encode('utf-8')).hexdigest()[:16]}"
+
+
+def _utc_day() -> str:
+    return datetime.now(timezone.utc).date().isoformat()
+
+
+class SearchQuotaExceeded(Exception):
+    """One client has spent its daily allowance of searches that cost a call.
+
+    Carries the allowance that applied, because the reply is only actionable if
+    it can say which one did: a signed-out reader is being told that signing in
+    is what raises it.
+    """
+
+    def __init__(self, limit: int, *, signed_in: bool) -> None:
+        self.limit = limit
+        self.signed_in = signed_in
+        super().__init__(f"daily allowance of {limit} new searches is spent")
+
+
+class SearchBudget:
+    """Counts the *new* searches one client may send upstream in a UTC day.
+
+    Only a query that is not already cached costs anything. That is the whole
+    shape of the problem: the aggregator resolves each distinct query once and
+    serves it from SQLite afterwards, so the same words typed twice are one
+    upstream call — and a client walking a dictionary through `/api/search` is
+    one call per word, which is how a public endpoint empties a 300-a-day
+    allowance in a minute and leaves everyone else yesterday's news.
+
+    The count is per calendar day, matching the provider ceilings it protects,
+    and lives in-process: one worker is the deployment's stated shape, so there
+    is no second process to agree with.
+    """
+
+    def __init__(self, anonymous_limit: int, signed_in_limit: int) -> None:
+        self._anonymous = max(0, anonymous_limit)
+        self._signed_in = max(0, signed_in_limit)
+        self._day = _utc_day()
+        self._used: dict[str, int] = {}
+
+    def allowance(self, *, signed_in: bool) -> int:
+        return self._signed_in if signed_in else self._anonymous
+
+    def allow(self, client: str, *, signed_in: bool) -> bool:
+        """Spend one new search for this client, or refuse it."""
+        today = _utc_day()
+        if today != self._day:
+            self._day = today
+            self._used.clear()
+
+        limit = self.allowance(signed_in=signed_in)
+        used = self._used.get(client, 0)
+        if used >= limit:
+            return False
+
+        if client not in self._used and len(self._used) >= MAX_BUDGET_CLIENTS:
+            # Insertion order is all the recency this needs: the count that has
+            # been idle longest is the one worth forgetting.
+            self._used.pop(next(iter(self._used)))
+        self._used[client] = used + 1
+        return True
 
 
 def _encode(page: _Page) -> bytes:
@@ -186,6 +255,10 @@ class NewsAggregator:
         self._client: httpx.AsyncClient | None = None
         self._limiter = RateLimiter(settings.freenewsapi_requests_per_second)
         self._blocked_hosts = settings.feed_blocked_host_list
+        # Guards the one request that cannot be answered from the cache.
+        self._search_budget = SearchBudget(
+            settings.search_daily_queries_anonymous, settings.search_daily_queries_user
+        )
 
         # One page is resolved once however many readers ask for it at the same
         # moment: the first holds the lock and fetches, the rest take the
@@ -234,7 +307,17 @@ class NewsAggregator:
         query: str | None = None,
         limit: int = DEFAULT_LIMIT,
         cursor: str | None = None,
+        client: str | None = None,
+        signed_in: bool = False,
     ) -> FeedResponse:
+        """A page of the feed. `client` and `signed_in` only matter to a search.
+
+        A query is the one input that reaches the providers for free: every
+        distinct one is its own cache key, and therefore its own upstream call.
+        So a search that is not already cached spends one unit of the calling
+        client's daily allowance — and raises `SearchQuotaExceeded` once that is
+        gone, rather than letting one client spend everyone else's day.
+        """
         limit = max(MIN_LIMIT, min(limit, MAX_LIMIT))
         key = _cache_key("feed", category=category, country=country, query=query, cursor=cursor)
 
@@ -249,10 +332,15 @@ class NewsAggregator:
             # merely slow, and however many readers arrive at once, the page is
             # fetched from upstream exactly once.
             log.info("cache stale %s: serving it and renewing behind", key)
+            if query is not None:
+                self._charge_search(client, signed_in=signed_in)
             self._renew_later(
                 key, category=category, country=country, query=query, cursor=cursor
             )
             return self._respond(page, limit=limit, cached=True, stale=True, providers=[])
+
+        if query is not None:
+            self._charge_search(client, signed_in=signed_in)
 
         page, providers, served_stale = await self._resolve(
             key, category=category, country=country, query=query, cursor=cursor
@@ -634,6 +722,18 @@ class NewsAggregator:
         task = asyncio.create_task(renew())
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
+
+    def _charge_search(self, client: str | None, *, signed_in: bool) -> None:
+        """Spend one unit of a client's daily search allowance, or refuse it.
+
+        A caller whose address cannot be told apart from anyone else's shares
+        one bucket rather than going uncounted: for a guard whose entire job is
+        a ceiling, refusing an honest reader is the recoverable mistake.
+        """
+        if not self._search_budget.allow(client or "unknown", signed_in=signed_in):
+            raise SearchQuotaExceeded(
+                self._search_budget.allowance(signed_in=signed_in), signed_in=signed_in
+            )
 
     def _lock_for(self, key: str) -> asyncio.Lock:
         lock = self._locks.get(key)
