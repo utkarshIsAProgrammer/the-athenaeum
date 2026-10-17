@@ -121,6 +121,11 @@ export const onRequest = defineMiddleware(async (context, next) => {
   // original would have the browser cut the response short.
   headers.delete("content-length");
   appendVary(headers, "accept-encoding");
+  // The body is gzip from here on, and saying so is the whole difference
+  // between a page and a screen of noise: without it the browser is handed
+  // compressed bytes labelled `text/html`, and `nosniff` stops it guessing.
+  // Compression is off in dev, so this is only ever visible once deployed.
+  headers.set("content-encoding", "gzip");
 
   return new Response(body.pipeThrough(new CompressionStream("gzip")), {
     status: response.status,
